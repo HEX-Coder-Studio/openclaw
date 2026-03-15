@@ -22,9 +22,68 @@
 
 ---
 
-## 2. Windows 部署流程
+## 2. 推荐发布方式（2026-03 更新）
 
-### 2.1 编译
+为了避免“发布后插件失效、飞书不回、重启后配置回退”等问题，建议优先使用仓库内的发布工具链：
+
+### 2.1 使用 deploy_menu.bat（推荐）
+
+```powershell
+Set-Location "D:\OpenClaw\Develop\openclaw"
+.\deploy_menu.bat
+```
+
+新增推荐入口：
+- `R`：Publish + Restart + Verify（推荐）
+- `V`：仅执行发布后健康验证
+
+命令行等价：
+
+```powershell
+.\deploy_menu.bat release-verify
+.\deploy_menu.bat verify
+```
+
+### 2.2 使用 deploy-post-release 独立目录（可归档复用）
+
+目录：`D:\OpenClaw\Develop\openclaw\deploy-post-release`
+
+建议将该目录作为“发布后脚本与文档”的统一维护点。
+
+脚本：
+- `00_post_release_menu.bat`（总入口，推荐）
+- `01_publish_only.bat`
+- `02_restart_only.bat`
+- `03_publish_restart_verify.bat`
+- `verify_post_release.ps1`
+- `DEPLOYMENT_POST_RELEASE.md`（发布后操作手册）
+
+建议直接执行：
+
+```powershell
+Set-Location "D:\OpenClaw\Develop\openclaw\deploy-post-release"
+.\00_post_release_menu.bat
+```
+
+无交互一键命令：
+
+```powershell
+Set-Location "D:\OpenClaw\Develop\openclaw\deploy-post-release"
+.\03_publish_restart_verify.bat
+```
+
+该流程会自动校验：
+- 网关健康（HTTP 200）
+- 关键插件与 allow-list
+- Feishu 策略（`dmPolicy=open`、`requireMention=false`、`allowFrom` 含 `*`）
+- 常用 skills 完整性
+- 日志关键错误（如 axios 缺失、插件加载失败）
+
+---
+
+## 3. Windows 部署流程
+
+### 3.1 编译
 
 ```powershell
 Set-Location "D:\OpenClaw\Develop\openclaw"
@@ -33,13 +92,13 @@ pnpm ui:build
 pnpm build:docker
 ```
 
-### 2.2 打包
+### 3.2 打包
 
 ```powershell
 pnpm pack --pack-destination D:\OpenClaw\deploy --config.ignore-scripts=true
 ```
 
-### 2.3 解压到运行目录
+### 3.3 解压到运行目录
 
 ```powershell
 $deploy = "D:\OpenClaw\deploy"
@@ -54,7 +113,7 @@ Set-Location (Join-Path $runtime "package")
 pnpm install --prod --ignore-scripts
 ```
 
-### 2.4 同步 UI 资源（避免 Control UI 丢失）
+### 3.4 同步 UI 资源（避免 Control UI 丢失）
 
 ```powershell
 $src = "D:\OpenClaw\Develop\openclaw\dist\control-ui"
@@ -67,7 +126,7 @@ Copy-Item -Recurse -Force (Join-Path $src "*") $dst
 
 ---
 
-## 3. 网关启动与访问
+## 4. 网关启动与访问
 
 ```powershell
 Set-Location "D:\OpenClaw\deploy\openclaw-runtime-next\package"
@@ -91,7 +150,7 @@ Invoke-WebRequest -Uri "http://127.0.0.1:18789" -UseBasicParsing
 
 ---
 
-## 4. 阿里云百炼接入（重点）
+## 5. 阿里云百炼接入（重点）
 
 ### 4.1 最小可用配置
 
@@ -126,7 +185,7 @@ node .\openclaw.mjs gateway run --port 18789 --verbose
 
 ---
 
-## 5. 本次故障根因与修复结论
+## 6. 本次故障根因与修复结论
 
 ### 5.1 启动不来（已解决）
 
@@ -155,7 +214,7 @@ node .\openclaw.mjs gateway start
 
 ---
 
-## 6. Endpoint 诊断脚本（建议保留）
+## 7. Endpoint 诊断脚本（建议保留）
 
 当遇到 401 时，先执行以下脚本测试 key 对哪个端点生效：
 
@@ -182,7 +241,7 @@ foreach ($u in $urls) {
 
 ---
 
-## 7. Qwen Portal 插件（可选）
+## 8. Qwen Portal 插件（可选）
 
 若你要用 Qwen OAuth provider（不是百炼 provider）：
 
@@ -203,7 +262,7 @@ Web：
 
 ---
 
-## 8. 常用命令速查（插件/状态/排障）
+## 9. 常用命令速查（插件/状态/排障）
 
 ### 8.1 网关与健康
 
@@ -251,7 +310,7 @@ node .\openclaw.mjs plugins doctor
 
 ---
 
-## 9. 注意事项
+## 10. 注意事项
 
 - `bailian/...` 与 `qwen-portal/...` 是两套 provider，不可混用。
 - `/model not allowed` 先检查 `agents.defaults.models` 白名单。
@@ -263,7 +322,7 @@ node .\openclaw.mjs plugins doctor
 
 ---
 
-## 10. 机器人插件（robot-kinematic）启用与调试
+## 11. 机器人插件（robot-kinematic）启用与调试
 
 目标：通过 `skills/robot-kinematic` 驱动本地 viewer：
 - `D:/OpenClaw/Develop/openclaw/models/robot_kinematic_viewer.html`
@@ -355,7 +414,7 @@ npm install
 
 ---
 
-## 11. 飞书集成（接收/回复）
+## 12. 飞书集成（接收/回复）
 
 ### 11.1 最小可用配置
 
@@ -477,3 +536,77 @@ node .\openclaw.mjs pairing approve feishu 2ZELAFZA
 3. `Action send requires a target`
 - 含义：调用 message 工具时没有可推导目标（或非飞书会话中缺少 target）。
 - 处理：显式提供 `target`（如 `chat:oc_xxx`）或在飞书原生会话中触发自动回路由。
+
+---
+
+## 13. 发布后高频问题与根因补充（新增）
+
+### 13.1 飞书能收测试消息，但不回复用户消息
+
+现象：
+- OpenClaw 能主动给飞书发消息。
+- 你在飞书私聊发消息后，机器人不回。
+
+根因：
+- DM 被 `pairing` 门禁或 mention 策略拦截（消息已接收，但未进入正常回复流）。
+
+建议配置（调试/联调阶段）：
+
+```json
+"channels": {
+  "feishu": {
+    "enabled": true,
+    "connectionMode": "websocket",
+    "dmPolicy": "open",
+    "requireMention": false,
+    "allowFrom": ["*"]
+  }
+}
+```
+
+验证日志关键字：
+- `feishu[default]: received message from ...`
+- `WebSocket client started`
+
+### 13.2 每次发布后飞书插件连不上或加载失败
+
+典型报错：
+- `Cannot find module 'axios'`
+- `feishu failed to load`
+
+根因：
+- 发布后插件依赖未完整安装或运行时目录被覆盖。
+
+处理：
+- 使用 `deploy_menu.bat release-verify` 或 `03_publish_restart_verify.bat`。
+- 确保执行了 `scripts/ensure-deploy-runtime.ps1`（脚本已内置到发布与重启流程）。
+
+### 13.3 发布后配置被“打回旧值”
+
+根因：
+- 运行时配置会参考用户配置与备份恢复；若用户配置仍是旧策略，发布后可能回滚。
+
+处理：
+- 同步维护：
+  - `C:\Users\<用户名>\.openclaw\openclaw.json`
+  - `D:\OpenClaw\deploy\config.runtime.json`
+- 统一通过 `deploy_menu.bat verify` 做发布后校验。
+
+### 13.4 出现批处理卡住（Terminate batch job）
+
+现象：
+- restart/publish 过程中控制台出现 `Terminate batch job (Y/N)?`
+
+处理：
+- 输入 `Y` 退出当前挂起批处理后重试。
+- 优先使用 `release-verify` 一次性流程，减少中断重入。
+
+### 13.5 推荐的标准发布闭环
+
+```powershell
+Set-Location "D:\OpenClaw\Develop\openclaw"
+.\deploy_menu.bat release-verify
+```
+
+若该命令通过，再做一条飞书人工验收：
+- 在飞书私聊发送 `测试回复`，确认机器人有回包。

@@ -15,6 +15,7 @@ set "BACKUP_DIR=%DEPLOY_DIR%\_persist_backup"
 set "PORT=18789"
 set "LOG_FILE=%DEPLOY_DIR%\gateway.log"
 set "ENSURE_SCRIPT=%SOURCE_DIR%\scripts\ensure-deploy-runtime.ps1"
+set "POST_VERIFY_SCRIPT=%SOURCE_DIR%\deploy-post-release\verify_post_release.ps1"
 
 rem Numeric argument mode
 if "%~1"=="1" goto do_compile_once
@@ -26,6 +27,7 @@ if "%~1"=="6" goto do_status_once
 if "%~1"=="7" goto do_start_dir_once
 if "%~1"=="8" goto do_stop_dir_once
 if "%~1"=="9" goto do_logs_once
+if "%~1"=="10" goto do_verify_once
 if "%~1"=="0" goto done
 
 rem Keyword argument mode
@@ -38,6 +40,8 @@ if /I "%~1"=="status" goto do_status_once
 if /I "%~1"=="start" goto do_start_dir_once
 if /I "%~1"=="stop" goto do_stop_dir_once
 if /I "%~1"=="logs" goto do_logs_once
+if /I "%~1"=="verify" goto do_verify_once
+if /I "%~1"=="release-verify" goto do_release_verify_once
 
 :menu
 cls
@@ -57,6 +61,8 @@ echo [6] Show running OpenClaw services and status
 echo [7] Start OpenClaw service from a specified directory
 echo [8] Stop OpenClaw service from a specified directory
 echo [9] Show deploy gateway log tail
+echo [V] Verify post-release runtime health
+echo [R] Publish + Restart + Verify (recommended)
 echo [0] Exit
 set "CHOICE="
 set /p "CHOICE=Select [0-9]: " || goto done
@@ -71,12 +77,34 @@ if "%CHOICE%"=="6" goto do_status
 if "%CHOICE%"=="7" goto do_start_dir
 if "%CHOICE%"=="8" goto do_stop_dir
 if "%CHOICE%"=="9" goto do_logs
+if /I "%CHOICE%"=="V" goto do_verify
+if /I "%CHOICE%"=="R" goto do_release_verify
 if "%CHOICE%"=="0" goto done
 
 echo.
-echo [WARN] Invalid input. Please enter 0-9.
+echo [WARN] Invalid input. Please enter 0-9, V, or R.
 pause
 goto menu
+
+:do_release_verify
+call :banner "Publish + Restart + Verify"
+call :publish_update
+if errorlevel 1 goto show_result
+call :restart_service
+if errorlevel 1 goto show_result
+call :verify_post_release
+call :show_result
+goto menu
+
+:do_release_verify_once
+call :banner "Publish + Restart + Verify"
+call :publish_update
+if errorlevel 1 exit /b 1
+call :restart_service
+if errorlevel 1 exit /b 1
+call :verify_post_release
+if errorlevel 1 exit /b 1
+exit /b 0
 
 :do_compile
 call :banner "Compile project"
@@ -206,6 +234,18 @@ goto menu
 :do_logs_once
 call :banner "Deploy gateway log tail"
 call :show_gateway_log_tail
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:do_verify
+call :banner "Verify post-release runtime health"
+call :verify_post_release
+call :show_result
+goto menu
+
+:do_verify_once
+call :banner "Verify post-release runtime health"
+call :verify_post_release
 if errorlevel 1 exit /b 1
 exit /b 0
 
@@ -545,6 +585,16 @@ if not exist "%ENSURE_SCRIPT%" (
   exit /b 0
 )
 powershell -NoProfile -ExecutionPolicy Bypass -File "%ENSURE_SCRIPT%" -DeployDir "%DEPLOY_DIR%" -SourceDir "%SOURCE_DIR%"
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:verify_post_release
+if not exist "%POST_VERIFY_SCRIPT%" (
+  echo [WARN] Post-release verify script not found: %POST_VERIFY_SCRIPT%
+  echo [INFO] Skipping post-release verification.
+  exit /b 0
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%POST_VERIFY_SCRIPT%" -ProjectDir "%SOURCE_DIR%" -DeployDir "%DEPLOY_DIR%" -Port %PORT%
 if errorlevel 1 exit /b 1
 exit /b 0
 

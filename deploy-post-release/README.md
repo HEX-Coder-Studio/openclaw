@@ -1,6 +1,6 @@
 # Post-Release Deploy Kit
 
-This folder contains reusable scripts and a verification checklist for post-release deployment.
+This folder contains reusable scripts and documentation for post-release deployment.
 
 ## Goal
 
@@ -13,12 +13,21 @@ Use these scripts after code updates to ensure:
 
 ## Files
 
+- `00_post_release_menu.bat`: Unified post-release menu (recommended entry)
 - `01_publish_only.bat`: Publish deploy runtime only
 - `02_restart_only.bat`: Restart service only
 - `03_publish_restart_verify.bat`: Publish + restart + verification (recommended)
 - `verify_post_release.ps1`: Automated runtime checks
+- `DEPLOYMENT_POST_RELEASE.md`: Post-release operations handbook (Chinese)
 
 ## Recommended workflow
+
+1. Double-click `00_post_release_menu.bat`
+2. Choose option `3` (Publish + Restart + Verify)
+3. Confirm terminal shows `[OK] Publish + Restart + Verification passed.`
+4. In Feishu, send a test message to the bot and confirm reply
+
+Alternative one-shot workflow:
 
 1. Double-click `03_publish_restart_verify.bat`
 2. Confirm terminal shows `[OK] Publish + Restart + Verification passed.`
@@ -32,6 +41,25 @@ Use these scripts after code updates to ensure:
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File .\verify_post_release.ps1
    ```
+
+## Non-interactive mode (for automation)
+
+`00_post_release_menu.bat` also supports command-line arguments:
+
+- `publish` or `1`
+- `restart` or `2`
+- `release-verify` or `3`
+- `verify` or `4`
+- `logs` or `5`
+- `docs`
+
+Examples:
+
+```powershell
+Set-Location "D:\OpenClaw\Develop\openclaw\deploy-post-release"
+.\00_post_release_menu.bat release-verify
+.\00_post_release_menu.bat verify
+```
 
 ## What verification checks
 
@@ -59,3 +87,5 @@ Use these scripts after code updates to ensure:
 - Default project path: `D:\OpenClaw\Develop\openclaw`
 - Default deploy path: `D:\OpenClaw\deploy`
 - If your paths differ, edit `verify_post_release.ps1` parameters or pass custom arguments.
+- For daily operations, use this folder as the single source of truth.
+- Scripts now include preflight checks for missing sibling scripts and key entry files to fail fast with clear messages.
