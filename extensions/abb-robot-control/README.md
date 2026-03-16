@@ -88,7 +88,11 @@ This OpenClaw plugin enables natural language control of actual ABB robots throu
 - `set_joints` - Move to joint positions
 - `set_preset` - Apply named preset
 - `run_sequence` - Execute motion sequence
+- `dance_two_points` - Build and execute continuous interpolated trajectory between two joint points
+- `dance_template` - Execute built-in dance templates (wave/bounce/sway/twist) with continuity
 - `go_home` - Return to home position
+- `get_motion_memory` - Inspect last trajectory endpoint used for continuity
+- `reset_motion_memory` - Reset continuity memory
 
 ### RAPID Programs | RAPID程序
 
@@ -186,6 +190,28 @@ AI: abb_robot action:set_joints joints:[90,0,0,0,0,0]
 ```
 User: Make the robot wave
 AI: abb_robot action:run_sequence sequence:wave_sequence
+```
+
+**Continuous Dance Segment | 连续舞蹈片段（双点自动补轨迹）:**
+```
+User: Use joint points A=[0,-40,55,0,30,0] and B=[35,-20,65,10,20,15], make smooth continuous motion for 8 beats
+AI: abb_robot action:dance_two_points point_a:[0,-40,55,0,30,0] point_b:[35,-20,65,10,20,15] repeat:8 speed:45 max_joint_step:5 auto_connect:true
+```
+
+This action automatically:
+- connects from previous segment endpoint to point A (when available)
+- interpolates dense waypoints between A/B for continuous movement
+- keeps endpoint in motion memory so the next dance command continues smoothly
+
+Advanced controls:
+- `interpolation`: `linear | smoothstep | cosine` (default: `cosine`)
+- `min_samples`: minimum points per segment (default: 2)
+- `max_joint_step`: max per-joint degree step (smaller = smoother)
+
+**Template Dance | 模板舞蹈动作:**
+```
+User: Use a wave dance template for 16 beats, smooth motion
+AI: abb_robot action:dance_template template:wave beats:16 speed:45 interpolation:cosine max_joint_step:5 auto_connect:true
 ```
 
 ## Troubleshooting | 故障排除

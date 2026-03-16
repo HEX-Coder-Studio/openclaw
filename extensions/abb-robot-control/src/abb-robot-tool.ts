@@ -7,12 +7,9 @@
 
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import { ABBController, createController, type ControllerConfig } from "./abb-controller.js";
+import { handleAction, type MotionState } from "./abb-robot-tool-actions.js";
 import {
   loadRobotConfig,
-  validateJointValues,
-  resolvePreset,
-  resolveSequence,
-  listRobots,
   identifyRobot,
   type RobotConfig,
 } from "./robot-config-loader.js";
@@ -22,6 +19,10 @@ import {
 let controller: ABBController | null = null;
 let currentConfig: RobotConfig | null = null;
 const configCache = new Map<string, RobotConfig>();
+const motionState: MotionState = {
+  lastTarget: null,
+  history: [],
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,10 +38,6 @@ function errorResult(message: string) {
     content: [{ type: "text" as const, text: `❌ abb_robot error: ${message}` }],
     details: { error: message },
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((res) => setTimeout(res, ms));
 }
 
 // ── Tool ─────────────────────────────────────────────────────────────────────
@@ -66,6 +63,7 @@ export function createABBRobotTool(pluginConfig: Record<string, unknown>): AnyAg
             "set_preset", "run_sequence", "go_home", "identify_robot",
             "list_robots", "list_presets", "list_sequences", "execute_rapid",
             "load_rapid", "start_program", "stop_program", "motors_on", "motors_off",
+            "dance_two_points", "dance_template", "get_motion_memory", "reset_motion_memory",
           ],
           description: "The action to perform.",
         },
@@ -76,8 +74,19 @@ export function createABBRobotTool(pluginConfig: Record<string, unknown>): AnyAg
         preset: { type: "string", description: "Named preset key" },
         sequence: { type: "string", description: "Named sequence key" },
         speed: { type: "number", description: "Movement speed percentage (1-100)" },
+        point_a: { type: "array", items: { type: "number" }, description: "Dance point A joint angles in degrees" },
+        point_b: { type: "array", items: { type: "number" }, description: "Dance point B joint angles in degrees" },
+        repeat: { type: "number", description: "How many A/B oscillations to execute (default: 2)" },
+        max_joint_step: { type: "number", description: "Max interpolation step per joint in degrees (default: 6)" },
+        min_samples: { type: "number", description: "Minimum interpolation samples per segment (default: 2)" },
+        interpolation: { type: "string", description: "Interpolation profile: linear | smoothstep | cosine" },
+        auto_connect: { type: "boolean", description: "Auto-connect from previous endpoint to point A (default: true)" },
+        return_to_a: { type: "boolean", description: "Return to point A at end of dance segment (default: false)" },
+        template: { type: "string", description: "Built-in dance template: wave | bounce | sway | twist" },
+        amplitude: { type: "number", description: "Template amplitude scale (0.1-2.0, default: 1.0)" },
+        beats: { type: "number", description: "Template beats mapped to repeat count (default: 8)" },
+        module_name: { type: "string", description: "RAPID module name for generated dance segment" },
         rapid_code: { type: "string", description: "RAPID program code" },
-        module_name: { type: "string", description: "RAPID module name" },
       },
       required: ["action"],
     },
@@ -112,6 +121,16 @@ export function createABBRobotTool(pluginConfig: Record<string, unknown>): AnyAg
           }
 
           currentConfig = getCfg(identifiedRobot);
+          try {
+            motionState.lastTarget = await controller.getJointPositions();
+            motionState.history.push({
+              timestamp: new Date().toISOString(),
+              joints: [...motionState.lastTarget],
+              source: "connect-sync",
+            });
+          } catch {
+            motionState.lastTarget = null;
+          }
 
           return {
             content: [{
@@ -127,9 +146,15 @@ export function createABBRobotTool(pluginConfig: Record<string, unknown>): AnyAg
         }
       }
 
-      // Other actions - see part 2
-      return require("./abb-robot-tool-actions.js").handleAction(
-        action, params, controller, currentConfig, pluginConfig, getCfg, errorResult
+      return handleAction(
+        action,
+        params,
+        controller,
+        currentConfig,
+        pluginConfig,
+        getCfg,
+        errorResult,
+        motionState
       );
     },
   };
