@@ -235,6 +235,9 @@ function Ensure-CoreRuntimeShims([string]$packageDir) {
   $yamlDir = Join-Path $packageDir 'node_modules\yaml'
   $yamlIndex = Join-Path $yamlDir 'index.js'
   $yamlDistIndex = Join-Path $yamlDir 'dist\index.js'
+  $lineDir = Join-Path $packageDir 'node_modules\@line\bot-sdk'
+  $lineIndex = Join-Path $lineDir 'index.js'
+  $lineDistIndex = Join-Path $lineDir 'dist\index.js'
 
   if ((Test-Path $yamlDir) -and (-not (Test-Path $yamlIndex)) -and (Test-Path $yamlDistIndex)) {
     Write-Info 'Creating runtime shim: node_modules/yaml/index.js -> dist/index.js'
@@ -243,6 +246,15 @@ function Ensure-CoreRuntimeShims([string]$packageDir) {
       "import yamlDefault from './dist/index.js';",
       "export default yamlDefault;"
     ) | Set-Content -Path $yamlIndex -Encoding UTF8
+  }
+
+  if ((Test-Path $lineDir) -and (-not (Test-Path $lineIndex)) -and (Test-Path $lineDistIndex)) {
+    Write-Info 'Creating runtime shim: node_modules/@line/bot-sdk/index.js -> dist/index.js'
+    @(
+      "export * from './dist/index.js';",
+      "import lineSdkDefault from './dist/index.js';",
+      "export default lineSdkDefault;"
+    ) | Set-Content -Path $lineIndex -Encoding UTF8
   }
 }
 

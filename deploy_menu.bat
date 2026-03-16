@@ -13,6 +13,7 @@ set "LEGACY_RUNTIME_DIR=%DEPLOY_DIR%\openclaw-runtime-live"
 set "LEGACY_PACKAGE_DIR=%LEGACY_RUNTIME_DIR%\package"
 set "BACKUP_DIR=%DEPLOY_DIR%\_persist_backup"
 set "PORT=18789"
+set "BRIDGE_PORT=9877"
 set "LOG_FILE=%DEPLOY_DIR%\gateway.log"
 set "ENSURE_SCRIPT=%SOURCE_DIR%\scripts\ensure-deploy-runtime.ps1"
 set "POST_VERIFY_SCRIPT=%SOURCE_DIR%\deploy-post-release\verify_post_release.ps1"
@@ -422,7 +423,6 @@ if not exist "%PACKAGE_DIR%\openclaw.mjs" (
 
 call :step "Try graceful gateway stop"
 cd /d "%PACKAGE_DIR%"
-call node openclaw.mjs gateway stop >nul 2>nul
 call :stop_gateway_processes
 call :wait_port_free %PORT%
 if errorlevel 1 (
@@ -437,15 +437,26 @@ if defined PID (
   powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-Process -Id %PID% -Force" >nul 2>nul
 )
 
+call :step "Release bridge port %BRIDGE_PORT% if occupied"
+set "PID="
+for /f "delims=" %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "(Get-NetTCPConnection -LocalPort %BRIDGE_PORT% -State Listen -ErrorAction SilentlyContinue ^| Select-Object -First 1 -ExpandProperty OwningProcess)"') do set "PID=%%P"
+if defined PID (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-Process -Id %PID% -Force" >nul 2>nul
+)
+
+call :step "Rotate gateway log"
+if exist "%LOG_FILE%" copy /y "%LOG_FILE%" "%DEPLOY_DIR%\gateway.previous.log" >nul 2>nul
+type nul > "%LOG_FILE%"
+
 call :step "Start gateway in background"
 call :ensure_runtime_assets
 if errorlevel 1 (echo [ERROR] Runtime ensure step failed. & exit /b 1)
-start "OpenClaw Gateway" /min cmd /c ""cd /d "%PACKAGE_DIR%" && set OPENCLAW_CONFIG_PATH=%DEPLOY_DIR%\config.runtime.json && node openclaw.mjs gateway --port %PORT% --verbose >> "%LOG_FILE%" 2>&1""
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:OPENCLAW_CONFIG_PATH='%DEPLOY_DIR%\config.runtime.json'; Start-Process -FilePath 'node' -ArgumentList @('openclaw.mjs','gateway','run','--port','%PORT%') -WorkingDirectory '%PACKAGE_DIR%' -WindowStyle Minimized -RedirectStandardOutput '%LOG_FILE%' -RedirectStandardError '%DEPLOY_DIR%\gateway.err.log'" >nul 2>nul
 
-call :step "Wait and run health check"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 5; try { $r=Invoke-WebRequest -Uri 'http://127.0.0.1:%PORT%' -UseBasicParsing -TimeoutSec 15; if($r.StatusCode -eq 200){ exit 0 } else { exit 2 } } catch { exit 1 }"
+call :step "Wait for startup and stability check"
+call :wait_gateway_stable %PORT% 60
 if errorlevel 1 (
-  echo [WARN] Service may not be fully started. Check log: %LOG_FILE%
+  echo [WARN] Service failed startup/stability check. Check log: %LOG_FILE%
   exit /b 1
 )
 
@@ -537,7 +548,7 @@ for /f "delims=" %%P in ('powershell -NoProfile -ExecutionPolicy Bypass -Command
 if defined PID powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-Process -Id %PID% -Force" >nul 2>nul
 
 call :step "Start gateway from target directory"
-start "OpenClaw Gateway %TARGET_PORT%" /min cmd /c ""cd /d "%TARGET_DIR%" && node openclaw.mjs gateway --port %TARGET_PORT% --verbose >> "%DEPLOY_DIR%\gateway-%TARGET_PORT%.log" 2>&1""
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'node' -ArgumentList @('openclaw.mjs','gateway','run','--port','%TARGET_PORT%','--verbose') -WorkingDirectory '%TARGET_DIR%' -WindowStyle Minimized -RedirectStandardOutput '%DEPLOY_DIR%\gateway-%TARGET_PORT%.log' -RedirectStandardError '%DEPLOY_DIR%\gateway-%TARGET_PORT%.err.log'" >nul 2>nul
 
 call :step "Health check"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 8; try { $r=Invoke-WebRequest -Uri 'http://127.0.0.1:%TARGET_PORT%' -UseBasicParsing -TimeoutSec 15; if($r.StatusCode -eq 200){ exit 0 } else { exit 2 } } catch { exit 1 }"
@@ -615,6 +626,15 @@ exit /b 0
 set "WAIT_PORT=%~1"
 if "%WAIT_PORT%"=="" set "WAIT_PORT=%PORT%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=%WAIT_PORT%; $deadline=(Get-Date).AddSeconds(30); while((Get-Date)-lt $deadline){ $c=Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; if(-not $c){ exit 0 }; Start-Sleep -Milliseconds 500 }; exit 1" >nul 2>nul
+if errorlevel 1 exit /b 1
+exit /b 0
+
+:wait_gateway_stable
+set "WG_PORT=%~1"
+set "WG_SECS=%~2"
+if "%WG_PORT%"=="" set "WG_PORT=%PORT%"
+if "%WG_SECS%"=="" set "WG_SECS=60"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$port=%WG_PORT%; $secs=%WG_SECS%; if($secs -le 0){ $secs=60 }; $startupDeadline=(Get-Date).AddSeconds(25); $started=$false; while((Get-Date)-lt $startupDeadline){ try { $r=Invoke-WebRequest -Uri ('http://127.0.0.1:{0}' -f $port) -UseBasicParsing -TimeoutSec 6; if($r.StatusCode -eq 200){ $started=$true; break } } catch {}; Start-Sleep -Seconds 2 }; if(-not $started){ exit 1 }; $stableDeadline=(Get-Date).AddSeconds($secs); while((Get-Date)-lt $stableDeadline){ $proc=Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" ^| Where-Object { $_.CommandLine -match 'openclaw\.mjs\s+gateway\s+run' }; if(-not $proc){ exit 1 }; try { $r=Invoke-WebRequest -Uri ('http://127.0.0.1:{0}' -f $port) -UseBasicParsing -TimeoutSec 6; if($r.StatusCode -ne 200){ exit 1 } } catch { exit 1 }; Start-Sleep -Seconds 5 }; exit 0" >nul 2>nul
 if errorlevel 1 exit /b 1
 exit /b 0
 

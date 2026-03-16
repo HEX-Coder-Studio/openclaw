@@ -23,6 +23,7 @@ function Assert-True([bool]$condition, [string]$successMsg, [string]$failMsg) {
 
 $runtimeConfig = Join-Path $DeployDir "config.runtime.json"
 $gatewayLog = Join-Path $DeployDir "gateway.log"
+$runtimePackageDir = Join-Path $DeployDir "openclaw-runtime-next\package"
 $skillsDir = Join-Path $DeployDir "openclaw-runtime-next\package\skills"
 
 Info "Loading runtime config..."
@@ -39,6 +40,27 @@ try {
   Fail "HTTP health check failed: $($_.Exception.Message)"
   $failed += "HTTP health check failed"
 }
+
+Info "Checking sustained HTTP health (60s)..."
+$sustainOk = $true
+for ($i = 1; $i -le 12; $i++) {
+  try {
+    $s = (Invoke-WebRequest -Uri ("http://127.0.0.1:{0}" -f $Port) -UseBasicParsing -TimeoutSec 8).StatusCode
+    if ($s -ne 200) {
+      $sustainOk = $false
+      break
+    }
+  } catch {
+    $sustainOk = $false
+    break
+  }
+  Start-Sleep -Seconds 5
+}
+Assert-True $sustainOk "Sustained HTTP health passed (60s)" "Sustained HTTP health failed within 60s"
+
+Info "Checking gateway process liveness..."
+$gatewayProc = Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'openclaw\.mjs\s+gateway\s+run' }
+Assert-True ($null -ne $gatewayProc) "Gateway node process exists" "Gateway node process not found"
 
 Info "Checking required plugin entries..."
 $requiredEntries = @("feishu", "qwen-portal-auth", "abb-robot-control")
@@ -73,6 +95,23 @@ if ($null -ne $feishu) {
   Assert-True ($allowFrom -contains "*") "Feishu allowFrom contains '*'" "Feishu allowFrom missing '*'"
 }
 
+Info "Checking Feishu runtime assets/dependencies..."
+$feishuPluginDir = Join-Path $runtimePackageDir "extensions\feishu"
+Assert-True (Test-Path $feishuPluginDir) "Feishu plugin directory exists" "Feishu plugin directory missing: $feishuPluginDir"
+
+$axiosRoot = Join-Path $runtimePackageDir "node_modules\axios"
+$axiosFeishuLocal = Join-Path $runtimePackageDir "extensions\feishu\node_modules\axios"
+Assert-True ((Test-Path $axiosRoot) -or (Test-Path $axiosFeishuLocal)) "Runtime dependency present: axios" ("Runtime dependency missing: axios ({0} or {1})" -f $axiosRoot, $axiosFeishuLocal)
+
+$runtimeDeps = @(
+  @{ Name = "yaml/index.js"; Path = (Join-Path $runtimePackageDir "node_modules\yaml\index.js") },
+  @{ Name = "@line/bot-sdk/index.js"; Path = (Join-Path $runtimePackageDir "node_modules\@line\bot-sdk\index.js") },
+  @{ Name = "@larksuiteoapi/node-sdk"; Path = (Join-Path $runtimePackageDir "node_modules\@larksuiteoapi\node-sdk") }
+)
+foreach ($dep in $runtimeDeps) {
+  Assert-True (Test-Path $dep.Path) ("Runtime dependency present: {0}" -f $dep.Name) ("Runtime dependency missing: {0} ({1})" -f $dep.Name, $dep.Path)
+}
+
 Info "Checking required skills..."
 $requiredSkills = @(
   "openclaw-aisa-web-search-tavily",
@@ -90,6 +129,10 @@ if (Test-Path $gatewayLog) {
   $tail = Get-Content $gatewayLog -Tail 300
   $patterns = @(
     "Cannot find module 'axios'",
+    "Cannot find package",
+    "missing dist/entry.",
+    "too many arguments for 'gateway'",
+    "too many arguments for 'run'",
     "feishu failed to load",
     "failed to load plugin",
     "plugins.allow is empty"
