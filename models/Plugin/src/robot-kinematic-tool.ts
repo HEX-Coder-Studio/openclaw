@@ -365,7 +365,7 @@ export function createRobotControlTool(): AnyAgentTool {
           const start = startValidated ?? current;
           const target = targetValidation.values;
           const waypoints = interpolateJoints(start, target, maxJointStep);
-          await sendToViewer(
+          const movjReplyText = await sendToViewer(
             {
               cmd: "movj",
               joints: target,
@@ -377,13 +377,37 @@ export function createRobotControlTool(): AnyAgentTool {
             12000,
           );
 
+          let movjReply: Record<string, unknown> = {};
+          try {
+            movjReply = JSON.parse(movjReplyText) as Record<string, unknown>;
+          } catch {
+            throw new Error(`Invalid viewer movj reply: ${movjReplyText}`);
+          }
+
+          if (String(movjReply["cmd"] ?? "") === "error") {
+            throw new Error(`Viewer movj failed: ${String(movjReply["error"] ?? "unknown error")}`);
+          }
+          if (String(movjReply["cmd"] ?? "") !== "movj_done") {
+            throw new Error(`Unexpected viewer movj reply cmd: ${String(movjReply["cmd"] ?? "(missing)")}`);
+          }
+
+          const endJoints = Array.isArray(movjReply["joints"])
+            ? (movjReply["joints"] as unknown[]).map((v) => Number(v) || 0)
+            : target;
+          const durationMs = Number(movjReply["durationMs"] ?? 0) || undefined;
+          const cancelled = Boolean(movjReply["cancelled"]);
+
           const count = (opts.robotId ? getSessionsForRobot(robotId) : getAllSessions()).length;
           const violations = [...startViolations, ...targetValidation.violations];
           let text =
             `MoveJ completed on ${count} viewer(s) of ${robotId}.\n` +
             `  Speed: ${speed}\n` +
             `  Waypoints: ${waypoints.length}\n` +
-            `  End joints: [${target.map((v) => v.toFixed(1)).join(", ")}]`;
+            `  Duration: ${durationMs ?? "?"}ms\n` +
+            `  End joints: [${endJoints.map((v) => v.toFixed(1)).join(", ")}]`;
+          if (cancelled) {
+            text += "\n  Note: Motion was cancelled by a newer command.";
+          }
           if (violations.length > 0) {
             text += `\n\n⚠ Clamped to limits:\n${violations.map((v) => `  ${v}`).join("\n")}`;
           }
@@ -395,8 +419,10 @@ export function createRobotControlTool(): AnyAgentTool {
               speed,
               maxJointStep,
               waypoints: waypoints.length,
+              durationMs,
+              cancelled,
               start,
-              end: target,
+              end: endJoints,
               viewers: count,
               violations,
             },
